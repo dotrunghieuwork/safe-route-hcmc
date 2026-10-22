@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Safe-Route HCMC</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
+  #map { position: absolute; inset: 0; }
+  #panel { position: absolute; top: 10px; left: 50px; z-index: 1000; background: #fff; color: #222;
+           padding: 12px 14px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.25);
+           width: 320px; font-size: 14px; }
+  #panel label { display: block; margin-top: 8px; }
+  #panel input { width: 100%; box-sizing: border-box; }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+  .sw { width: 22px; height: 4px; display: inline-block; }
+  #msg { margin-top: 10px; line-height: 1.4; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+  <b>Safe-Route HCMC</b><br>
+  <small>Click lên bản đồ: lần 1 chọn điểm A, lần 2 chọn điểm B.</small>
+  <label>Thời điểm (giả lập)
+    <input id="t" type="datetime-local" value="2022-10-24T22:00" step="1800">
+  </label>
+  <label>Mức ưu tiên an toàn β = <span id="bv">20</span>
+    <input id="beta" type="range" min="0" max="50" value="20">
+  </label>
+  <div class="row"><span class="sw" style="background:#2563eb"></span> Nhanh nhất</div>
+  <div class="row"><span class="sw" style="background:#16a34a"></span> An toàn</div>
+  <div class="row"><span class="sw" style="background:#dc2626"></span> Đoạn có rủi ro ngập</div>
+  <div id="msg"></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const map = L.map('map').setView([10.845, 106.76], 14);   // quanh tram mua Thu Duc
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+
+let A = null, B = null, layers = [], markers = [], heat = null;
+const msg = document.getElementById('msg');
+const tInput = document.getElementById('t'), beta = document.getElementById('beta');
+const color = r => r >= 0.7 ? '#dc2626' : r >= 0.5 ? '#f97316' : '#facc15';
+
+async function loadHeat() {
+  if (heat) map.removeLayer(heat);
+  const res = await fetch(`/api/risk?t=${tInput.value}`);
+  if (!res.ok) { msg.textContent = 'Chưa có dữ liệu rủi ro.'; return; }
+  const d = await res.json();
+  heat = L.geoJSON(d.geojson, { style: f => ({ color: color(f.properties.risk), weight: 3, opacity: .6 }) }).addTo(map);
+}
+
+async function loadRoute() {
+  if (!A || !B) return;
+  layers.forEach(l => map.removeLayer(l)); layers = [];
+  msg.textContent = 'Đang tìm đường...';
+  const q = new URLSearchParams({ from_lat: A.lat, from_lon: A.lng, to_lat: B.lat, to_lon: B.lng,
+                                  t: tInput.value, beta: beta.value });
+  const res = await fetch(`/api/route?${q}`);
+  const d = await res.json();
+  if (!res.ok) { msg.textContent = d.detail; return; }
+  layers.push(L.geoJSON(d.fastest.geojson, { style: { color: '#2563eb', weight: 7, opacity: .7 } }).addTo(map));
+  layers.push(L.geoJSON(d.safest.geojson, { style: { color: '#16a34a', weight: 4, opacity: .9, dashArray: '6 6' } }).addTo(map));
+  const f = d.fastest, s = d.safest;
+  msg.innerHTML = `<b>Nhanh nhất:</b> ${f.time_min} phút, ${f.length_km} km, ${f.risky_km} km rủi ro cao<br>
+                   <b>An toàn:</b> ${s.time_min} phút, ${s.length_km} km, ${s.risky_km} km rủi ro cao<br>
+                   <i>${d.explanation}</i>`;
+}
+
+map.on('click', e => {
+  if (!A || B) {
+    [...layers, ...markers].forEach(l => map.removeLayer(l)); layers = []; markers = [];
+    A = e.latlng; B = null; markers.push(L.marker(A).bindTooltip('A').addTo(map));
+    msg.textContent = 'Chọn điểm B.';
+  } else {
+    B = e.latlng; markers.push(L.marker(B).bindTooltip('B').addTo(map)); loadRoute();
+  }
+});
+beta.oninput = () => { document.getElementById('bv').textContent = beta.value; };
+beta.onchange = loadRoute;
+tInput.onchange = () => { loadHeat(); loadRoute(); };
+loadHeat();
+</script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+services:
+  db:
+    build: ./geospatial-db
+    environment:
+      POSTGRES_DB: saferoute
+      POSTGRES_USER: saferoute
+      POSTGRES_PASSWORD: saferoute
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./geospatial-db/init:/docker-entrypoint-initdb.d:ro
+      - ./geospatial-db:/work:ro
+      - ./data/clean:/data/clean:ro
+      - ./data/osm:/osm
+
+  api:
+    build: ./routing-service
+    environment:
+      DATABASE_URL: postgresql://saferoute:saferoute@db:5432/saferoute
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./routing-service:/app/routing:ro
+      - ./prediction-service:/app/prediction:ro
+      - ./frontend:/app/frontend:ro
+    depends_on:
+      - db
+
+volumes:
+  pgdata:
